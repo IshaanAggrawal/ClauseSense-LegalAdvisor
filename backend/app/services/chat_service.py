@@ -14,24 +14,17 @@ class ChatService:
             return {"response": "Daily Quota Exceeded."}
 
         # 2. PHASE 1: ROUTING (Groq/Gemini)
-        # We ask: "Is this legal or just chat?"
         router_data = self.llm.route_query(message)
         
         response_text = ""
         
         if router_data["type"] == "GENERAL":
-            # CASE A: Stupid Question / Small Talk
-            # We skip the Vector Search and Hugging Face entirely.
-            # We just return what Groq/Gemini wrote.
+            # CASE : Stupid Question / Small Talk
             print(f"Skipping Legal Pipeline. Intent: {router_data['type']}")
             response_text = router_data["reply"]
             
         else:
-            # CASE B: Legal Query
-            # We proceed to the "Better Model" pipeline
             print(f"Entering Legal Pipeline. Metadata: {router_data['metadata']}")
-            
-            # 3. Search Vector DB (Using the keywords extracted by Groq!)
             keywords = " ".join(router_data["metadata"].get("keywords", []))
             search_query = f"{message} {keywords}"
             
@@ -45,7 +38,6 @@ class ChatService:
                 metadata=router_data["metadata"]
             )
 
-        # 5. Save & Return
         self.mgr.save_turn(session_id, message, response_text)
         
         return {

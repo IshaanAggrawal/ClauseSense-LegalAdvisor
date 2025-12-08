@@ -8,19 +8,10 @@ import json
 class LLMFactory:
     def __init__(self):
         self.sanitizer = DataSanitizer()
-        
-        # --- 1. PRIMARY ROUTER (Gemini 2.0 Flash) ---
         genai.configure(api_key=settings.GOOGLE_API_KEY)
         self.gemini = genai.GenerativeModel('gemini-2.0-flash')
-        
-        # --- 2. BACKUP ROUTER (Groq Llama 3.3) ---
         self.groq_client = Groq(api_key=settings.GROQ_API_KEY)
-        
-        # --- 3. LEGAL EXPERT (Hugging Face) ---
-        # Initialize client with just the token
         self.hf_client = InferenceClient(token=settings.HF_API_KEY)
-        
-        # ✅ CRITICAL FIX: Define the model ID here so we can use it later
         self.hf_model_id = settings.HF_INFERENCE_URL 
 
     def _call_groq_router(self, prompt: str):
@@ -82,7 +73,6 @@ class LLMFactory:
         state = metadata.get("jurisdiction", "India")
         
         # 1. OPTIMIZED PROMPT: Short & Direct (Saves Input Tokens)
-        # We removed the instruction to "add a disclaimer" to save generation cost.
         system_msg = (
             f"You are a Senior Legal Advisor for {state}. "
             f"Answer the user's question in 2 concise sentences based strictly on the Context."
@@ -101,12 +91,7 @@ class LLMFactory:
                 temperature=0.1,       # PRECISE
                 stop=["Question:"]     # FIX: Removed "\n\n" so it doesn't cut itself off
             )
-            
-            # 2. CLEAN UP & MANUALLY ADD DISCLAIMER
-            # This is cheaper than paying the AI to generate it every time.
             answer = response.choices[0].message.content.strip()
-            
-            # Formatting: Ensure answer ends with a period before the disclaimer
             if not answer.endswith('.'):
                 answer += "."
                 
