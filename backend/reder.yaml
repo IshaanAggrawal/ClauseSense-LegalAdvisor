@@ -6,8 +6,8 @@ services:
     region: singapore # or ohio, frankfurt (Choose closest to you)
     buildCommand: |
       pip install -r requirements.txt
-      python -m spacy download en_core_web_lg
-    startCommand: gunicorn app.main:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:10000
+      python -m spacy download en_core_web_sm
+    startCommand: gunicorn app.main:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.0
