@@ -36,8 +36,5 @@ def run_upload():
     except Exception as e:
         print(f"❌ ERROR: {e}")
     
-    # 3. Cleanup (optional, remove if you want to keep the file)
-    # os.remove(FILENAME) 
-
 if __name__ == "__main__":
     run_upload()

@@ -1,37 +1,23 @@
-# Core Dependencies
 fastapi>=0.104.1
 uvicorn[standard]>=0.24.0
 pydantic>=2.5.0
-
-# AI/ML Libraries
 transformers>=4.35.0
 torch>=2.1.0
 sentence-transformers>=2.2.2
 langchain>=0.0.333
 langchain-community>=0.0.1
 faiss-cpu>=1.7.4
-
-# LLM Providers (Optional)
+chromadb>=0.4.0
 google-generativeai>=0.3.2
 groq>=0.5.0
-
-# Document Processing
 pypdf>=3.17.0
 python-docx>=0.8.11
 unstructured>=0.10.30
-
-# NLP and Sanitization
 spacy>=3.7.0
-
-# Utilities
 redis>=5.0.1
 python-multipart>=0.0.6
 requests>=2.31.0
-
-# Development
 pytest>=7.4.3
 black>=23.11.0
 flake8>=6.1.0
-
-# Production
 gunicorn>=21.2.0
