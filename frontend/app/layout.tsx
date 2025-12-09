@@ -4,6 +4,7 @@ import { Space_Grotesk } from "next/font/google"
 import { Geist, Geist_Mono } from "next/font/google"
 import "./globals.css"
 import { AuroraBg } from "@/components/aurora-bg"
+import { ToastProvider, ToastViewport } from '@/components/ui/toast'
 
 const _geist = Geist({ subsets: ["latin"] })
 const _geistMono = Geist_Mono({ subsets: ["latin"] })
@@ -41,8 +42,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`font-sans antialiased`}>
-        <AuroraBg />
-        {children}
+        <ToastProvider>
+          <AuroraBg />
+          {children}
+          <ToastViewport />
+        </ToastProvider>
       </body>
     </html>
   )

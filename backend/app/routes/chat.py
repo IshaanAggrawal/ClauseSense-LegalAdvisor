@@ -5,8 +5,17 @@ router = APIRouter()
 service = ChatService()
 
 @router.post("/chat")
-async def chat(session_id: str = Body(..., embed=True), message: str = Body(..., embed=True)):
+async def chat(document_id: str = Body(..., embed=True), message: str = Body(..., embed=True)):
+    """
+    Chat endpoint. 
+    document_id: Acts as the session ID for the context of this specific file.
+    message: The user's query.
+    """
     try:
-        return await service.process_message(session_id, message)
+        if not document_id or not message:
+            raise HTTPException(status_code=400, detail="document_id and message are required")
+            
+        return await service.process_message(str(document_id), str(message))
     except Exception as e:
-        raise HTTPException(500, str(e))
+        print(f"Chat Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

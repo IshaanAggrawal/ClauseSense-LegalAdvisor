@@ -11,37 +11,36 @@ class SessionManager:
         Checks if the user has exceeded their daily message limit.
         Returns True if they have credits left.
         """
-        # Get today's date in UTC (Supabase uses UTC by default)
         today_start = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         
         try:
-            # Count how many messages this session sent *today*
-            # We filter by 'created_at' being greater than or equal to today 00:00
             res = self.supabase.table('chat_history')\
                 .select('*', count='exact')\
                 .eq('session_id', session_id)\
                 .gte('created_at', today_start)\
                 .execute()
             
-            # If the count is LESS than the limit, they are good to go.
             return res.count < settings.DAILY_QUOTA
             
         except Exception as e:
             print(f"Quota Check Error: {e}")
-            # If DB fails, we default to True (Allow access) so we don't block users due to a bug
             return True
 
     def get_history(self, session_id: str):
         """Fetch last 5 messages for context"""
         try:
+            # Fetch last 5 messages
             res = self.supabase.table('chat_history')\
                 .select('*')\
                 .eq('session_id', session_id)\
                 .order('created_at', desc=True)\
                 .limit(5)\
                 .execute()
+            
+            # Reverse them to be in chronological order (Oldest -> Newest)
             return res.data[::-1] if res.data else []
-        except Exception:
+        except Exception as e:
+            print(f"History Fetch Error: {e}")
             return []
 
     def save_turn(self, session_id: str, user_msg: str, ai_msg: str):

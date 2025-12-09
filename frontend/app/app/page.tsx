@@ -2,114 +2,314 @@
 
 import type React from "react"
 import { useState, useEffect, useRef } from "react"
-import Link from "next/link"
-import { Upload, Loader2, AlertCircle, Send } from "lucide-react"
-import { GlassPanel } from "@/components/glass-panel"
+import { useRouter } from 'next/navigation'
+import { Upload, Send, History, X, Menu, Plus, FileText, Bot, Home, File, Square, MessageSquarePlus } from "lucide-react"
+import { useToast } from '@/components/ui/use-toast'
+import { ToastAction } from '@/components/ui/toast'
 import { AuroraBackground } from "@/components/aurora-background"
 import { GrainOverlay } from "@/components/grain-overlay"
 import { CursorGlow } from "@/components/cursor-glow"
-import { ScrollReveal } from "@/components/scroll-reveal"
 
 interface Message {
   id: string
   text: string
   role: "user" | "assistant"
+  fileName?: string
+  model?: string
+}
+
+interface Chat {
+  id: string
+  title: string
+  messages: Message[]
+  date: string
+  fileName?: string
 }
 
 export default function AppPage() {
+  const { toast } = useToast()
+  const router = useRouter()
+  
+  // State management
   const [uploadedFile, setUploadedFile] = useState<{ name: string; size: number } | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const [analysisComplete, setAnalysisComplete] = useState(false)
-  const [displayedSummary, setDisplayedSummary] = useState("")
-  const [visibleIssues, setVisibleIssues] = useState<number[]>([])
-  const [currentDocId, setCurrentDocId] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  
+  // Initialized with dummy data
+  const [chatHistory, setChatHistory] = useState<Chat[]>([
+    { 
+      id: "1", 
+      title: "Legal Document Review", 
+      date: "12/08/2025",
+      fileName: "nda_contract.pdf",
+      messages: [
+        { id: "1", role: "user", text: "Review this NDA for me" },
+        { id: "2", role: "assistant", text: "I have reviewed the NDA. Clause 3 regarding termination seems non-standard." }
+      ]
+    },
+    { 
+      id: "2", 
+      title: "Murder Case Precedents", 
+      date: "12/07/2025",
+      messages: [
+        { id: "1", role: "user", text: "give me some legal cases related to murder" },
+        { id: "2", role: "assistant", text: "I cannot provide specific legal advice or case details for criminal acts." }
+      ]
+    }
+  ])
+  
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "1",
-      text: "Hi! I'm your AI legal advisor. Upload a document to get started.",
+      text: "Hello! I am your AI Legal Advisor. Upload a document to get started or ask me a general legal question.",
       role: "assistant",
-    },
-  ])
+    }
+  ]);
+
+  const [abortController, setAbortController] = useState<AbortController | null>(null)
   const [chatInput, setChatInput] = useState("")
+  const [currentDocId, setCurrentDocId] = useState<string | null>(null)
+  const [isThinking, setIsThinking] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [showChatHistory, setShowChatHistory] = useState(false)
+  const [showMobileSidebar, setShowMobileSidebar] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  const fullSummary =
-    "This legal document contains 12 primary clauses covering liability, indemnification, and dispute resolution. Key obligations include: (1) confidentiality maintenance, (2) performance standards, and (3) termination rights."
+  const LEGAL_DISCLAIMER = "\n\n---\n**Disclaimer:** I am an AI assistant, not a lawyer. This analysis is for informational purposes only and does not constitute legal advice. Please consult a qualified attorney for professional counsel.";
 
-  const clauses = [
-    { title: "Liability Limitation", status: "standard", type: "Standard clause" },
-    { title: "Indemnification", status: "warning", type: "Anomaly: Unusual scope detected" },
-    { title: "Termination Rights", status: "standard", type: "Standard clause" },
-  ]
+  // Parse AI response
+  const parseAIResponse = (response: string) => {
+    const disclaimerMatch = response.match(/\(Disclaimer:.*?\)/);
+    const disclaimer = disclaimerMatch ? disclaimerMatch[0] : '';
+    
+    let cleanResponse = response.replace(/\(Disclaimer:.*?\)/g, '').trim();
+    
+    cleanResponse = cleanResponse
+      .replace(/^<assistant\|>\s*/, '') 
+      .replace(/^(Answer:\s*)+/i, '')
+      .replace(/^(Response:\s*)+/i, '')
+      .replace(/^(I apologize, but\s*)+/i, '')
+      .replace(/^[\W]+/, '') 
+      .trim();
 
-  useEffect(() => {
-    if (!analysisComplete) return
-
-    let charIndex = 0
-    const interval = setInterval(() => {
-      if (charIndex < fullSummary.length) {
-        setDisplayedSummary(fullSummary.slice(0, charIndex + 1))
-        charIndex++
-      } else {
-        clearInterval(interval)
-      }
-    }, 20)
-
-    return () => clearInterval(interval)
-  }, [analysisComplete, fullSummary])
-
-  useEffect(() => {
-    if (!analysisComplete) return
-
-    clauses.forEach((_, index) => {
-      setTimeout(() => {
-        setVisibleIssues((prev) => [...prev, index])
-      }, index * 200)
-    })
-  }, [analysisComplete, clauses])
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+    return {
+      answer: cleanResponse,
+      hasDisclaimer: !!disclaimer,
+      disclaimerText: disclaimer
+    };
   }
 
-  useEffect(() => {
-    scrollToBottom()
-  }, [messages])
+  // --- STOP RESPONSE FUNCTION ---
+  const handleStopResponse = () => {
+    if (abortController) {
+      abortController.abort()
+      setAbortController(null)
+      setIsThinking(false)
+      
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        text: "🛑 [Response stopped by user]",
+        role: "assistant",
+        model: "System"
+      }])
+    }
+  }
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // --- NEW CHAT & SAVE TO HISTORY FUNCTION ---
+  const handleNewChat = () => {
+    if (messages.length > 1) {
+      let title = "New Conversation";
+      if (uploadedFile) {
+        title = `Analysis: ${uploadedFile.name}`;
+      } else {
+        const firstUserMsg = messages.find(m => m.role === 'user');
+        if (firstUserMsg) {
+          title = firstUserMsg.text.length > 25 
+            ? firstUserMsg.text.slice(0, 25) + "..." 
+            : firstUserMsg.text;
+        }
+      }
+
+      const newHistoryItem: Chat = {
+        id: Date.now().toString(),
+        title: title,
+        messages: [...messages],
+        date: new Date().toLocaleDateString(),
+        fileName: uploadedFile?.name
+      }
+      
+      setChatHistory(prev => [newHistoryItem, ...prev])
+      
+      toast({
+        title: "Chat Saved",
+        description: "Your conversation has been added to history.",
+      })
+    }
+
+    setMessages([{
+      id: Date.now().toString(),
+      text: "New chat started. How can I help you regarding legal matters today?",
+      role: "assistant",
+    }])
+    setUploadedFile(null)
+    setCurrentDocId(null)
+    setChatInput("")
+    setError(null)
+  }
+
+  const loadChatFromHistory = (chat: Chat) => {
+    setMessages(chat.messages)
+    if (chat.fileName) {
+        setUploadedFile({ name: chat.fileName, size: 0 }) 
+    } else {
+        setUploadedFile(null)
+    }
+    setShowChatHistory(false)
+    
+    toast({
+        title: "History Loaded",
+        description: `Loaded conversation: ${chat.title}`,
+    })
+  }
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
+    // 1. Initial State for Upload
+    const uploadMsgId = Date.now().toString();
+    setMessages(prev => [...prev, {
+        id: uploadMsgId,
+        text: `Uploading and analyzing ${file.name}...`,
+        role: "assistant"
+    }])
+    
     setIsAnalyzing(true)
     setError(null)
     setUploadedFile({
       name: file.name,
       size: file.size,
     })
-    setDisplayedSummary("")
-    setVisibleIssues([])
 
-    // Simulate file processing with a timeout
-    setTimeout(() => {
-      setCurrentDocId(`doc_${Date.now()}`)
-      setAnalysisComplete(true)
+    const formData = new FormData()
+    formData.append('file', file)
+    const inputElement = e.target;
+
+    let progress = 0
+    const progressInterval = setInterval(() => {
+      progress += Math.random() * 10
+      if (progress >= 95) {
+        progress = 95
+      }
+      setUploadProgress(progress)
+    }, 100)
+
+    try {
+      // 2. Perform Upload
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/upload`, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        clearInterval(progressInterval);
+        const errorData = await response.json()
+        throw new Error(errorData.detail || 'Failed to upload document')
+      }
+
+      const result = await response.json()
       
-      // Add success message
-      setMessages(prev => [...prev, {
-        id: Date.now().toString(),
-        text: "I've analyzed your document. You can now ask me questions about it!",
-        role: "assistant"
-      }])
+      // Ensure we have a valid ID
+      if (!result.document_id) {
+          throw new Error('Upload successful but no document ID returned.');
+      }
+
+      setCurrentDocId(result.document_id)
+      
+      clearInterval(progressInterval);
+      setUploadProgress(100);
+
+      // 3. Auto-Trigger Analysis (Chained Request)
+      // FIX: Explicitly cast document_id to String to avoid 422 type errors
+      const docIdStr = String(result.document_id);
+
+      const analysisResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+            document_id: docIdStr, 
+            message: "Please analyze the uploaded document and provide a concise summary of its key legal points and any potential issues." 
+        }),
+      })
+
+      if (!analysisResponse.ok) {
+          const errorData = await analysisResponse.json();
+          console.error("Analysis Error Details:", errorData); // Log for debugging
+          throw new Error(errorData.detail || 'Document uploaded, but analysis failed.');
+      }
+
+      const analysisResult = await analysisResponse.json()
+      const { answer } = parseAIResponse(analysisResult.response)
+
+      // 4. Update UI with Analysis AND Disclaimer
+      setMessages(prev => {
+        const filtered = prev.filter(msg => msg.id !== uploadMsgId);
+        return [...filtered, {
+            id: Date.now().toString(),
+            text: `**Analysis of ${file.name}:**\n\n${answer}${LEGAL_DISCLAIMER}`,
+            role: "assistant",
+            model: analysisResult.router_decision || "Analysis"
+        }]
+      })
       
       setIsAnalyzing(false)
-    }, 1500) // Simulate processing time
+      setUploadProgress(0)
+      
+      toast({
+        title: "Analysis Complete",
+        description: "Document uploaded and analyzed successfully.",
+      })
+
+    } catch (error) {
+      setIsAnalyzing(false)
+      setUploadProgress(0)
+      setUploadedFile(null)
+      
+      setMessages(prev => [
+          ...prev.filter(msg => msg.id !== uploadMsgId),
+          {
+              id: Date.now().toString(),
+              text: `Error: ${error instanceof Error ? error.message : "Failed to process document"}`,
+              role: "assistant"
+          }
+      ])
+      
+      toast({
+        variant: "destructive",
+        title: "Process failed",
+        description: error instanceof Error ? error.message : "Failed to upload/analyze document",
+        action: (
+          <ToastAction altText="Try again" onClick={() => inputElement.click()}>
+            Try again
+          </ToastAction>
+        ),
+      })
+    }
   }
 
-  const handleSendChat = () => {
+  const handleSendChat = async () => {
     const message = chatInput.trim()
-    if (!message || !currentDocId) return
+    
+    // Input validation: reject empty or whitespace-only messages
+    if (!message || message.length === 0 || isThinking) {
+      setError("Please enter a message before sending.")
+      return
+    }
+
+    const controller = new AbortController()
+    setAbortController(controller)
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -119,310 +319,358 @@ export default function AppPage() {
 
     setMessages((prev) => [...prev, userMessage])
     setChatInput("")
-    setIsLoading(true)
+    setIsThinking(true)
     setError(null)
+    
+    // Force document_id to be a string to prevent 422 errors
+    const docId = currentDocId ? String(currentDocId).trim() : 'general_chat';
+    
+    // Validate docId is not empty
+    if (!docId || docId.length === 0) {
+      setError("Invalid document ID. Please try again.")
+      setIsThinking(false)
+      return
+    }
 
-    // Simulate API response with mock data
-    setTimeout(() => {
-      const mockResponses = [
-        "This clause appears to be standard, but you might want to review section 4.2 for any specific concerns.",
-        "Based on the document, the key terms seem to align with standard practices in this jurisdiction.",
-        "I've identified a potential issue with the termination clause. Let me explain the details...",
-        "The document appears to be missing some standard indemnification language. Would you like me to suggest some additions?"
-      ]
-      
-      const randomResponse = mockResponses[Math.floor(Math.random() * mockResponses.length)]
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ document_id: docId, message }),
+        signal: controller.signal
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || 'Failed to get response')
+      }
+
+      const result = await response.json()
+      const { answer } = parseAIResponse(result.response)
       
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
-        text: randomResponse,
+        text: answer + (docId !== 'general_chat' ? LEGAL_DISCLAIMER : ""), // Only add disclaimer for legal doc chats if desired, or always
         role: "assistant",
+        model: result.router_decision || "General"
       }
       setMessages((prev) => [...prev, assistantMessage])
-      setIsLoading(false)
-    }, 800) // Simulate network delay
+      
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('Request was aborted')
+        return
+      }
+      
+      setIsThinking(false)
+      if (error instanceof Error && error.name !== 'AbortError') {
+          toast({
+            variant: "destructive",
+            title: "Error",
+            description: error instanceof Error ? error.message : "Failed to send message"
+          })
+      }
+    } finally {
+      setIsThinking(false)
+      setAbortController(null)
+    }
   }
 
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
   return (
-    <div className="relative min-h-screen bg-background overflow-hidden">
+    <div className="h-screen w-screen flex bg-background relative">
+      <AuroraBackground />
       <GrainOverlay />
       <CursorGlow />
-
-      <AuroraBackground />
       
-      {error && (
-        <div className="fixed top-20 right-6 max-w-md p-4 bg-red-100 border border-red-200 rounded-lg shadow-lg z-50">
-          <div className="flex items-center gap-2 text-red-700">
-            <AlertCircle className="w-5 h-5" />
-            <p className="text-sm">{error}</p>
+      {(showMobileSidebar || showChatHistory) && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={() => {
+            if (showMobileSidebar) setShowMobileSidebar(false);
+            if (showChatHistory) setShowChatHistory(false);
+          }}
+        />
+      )}
+      
+      {/* Sidebar */}
+      <div 
+        className={`
+          fixed top-0 left-0 h-full 
+          bg-card/80 backdrop-blur-sm border-r border-accent/10 
+          flex flex-col items-center py-6 z-50 
+          transition-transform duration-300 ease-in-out
+          w-16 md:w-20
+          md:translate-x-0
+          ${showMobileSidebar ? 'translate-x-0' : '-translate-x-full'}
+        `}
+      >
+        <div className="space-y-6 flex flex-col justify-center h-full">
+          <button
+            onClick={() => setShowChatHistory(!showChatHistory)}
+            className="p-3 rounded-xl hover:bg-accent/10 transition-all duration-200 group relative"
+            title="Chat History"
+            suppressHydrationWarning
+          >
+            <History className="w-6 h-6 text-foreground/70 group-hover:text-foreground" />
+          </button>
+        </div>
+      </div>
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col h-full pl-0 md:pl-20 relative z-10">
+        <header className="h-20 border-b border-accent/10 flex items-center justify-between px-6 z-20 bg-background/80 backdrop-blur-lg">
+          <button
+            onClick={() => setShowMobileSidebar(true)}
+            className="md:hidden p-3 mr-4 rounded-xl hover:bg-accent/10 transition-all duration-200"
+            title="Open Menu"
+            suppressHydrationWarning
+          >
+            <Menu className="w-6 h-6 text-foreground/70" />
+          </button>
+
+          <div className="flex items-center space-x-2">
+            <div className="p-2 bg-gradient-to-br from-primary to-primary/80 rounded-xl">
+              <Bot className="w-4 h-4 text-primary-foreground" />
+            </div>
+            <div>
+              <h1 className="text-sm sm:text-lg font-semibold text-foreground truncate max-w-[150px] sm:max-w-[200px]">
+                {uploadedFile?.name || 'Legal Advisor'}
+              </h1>
+              <p className="text-xs text-muted-foreground hidden sm:block">
+                {uploadedFile ? 'Document uploaded' : 'AI-powered legal assistance'}
+              </p>
+            </div>
+          </div>
+          
+          <button
+            onClick={() => router.push('/')}
+            className="flex items-center space-x-1 px-3 py-2 rounded-xl bg-accent/10 hover:bg-accent/20 transition-all duration-200 group"
+            title="Back to Home"
+            suppressHydrationWarning
+          >
+            <Home className="w-4 h-4 text-foreground/70 group-hover:text-foreground transition-colors" />
+            <span className="text-foreground/70 group-hover:text-foreground transition-colors text-xs font-medium hidden sm:inline">
+              Home
+            </span>
+          </button>
+        </header>
+
+        {/* Messages Area */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          <div className="space-y-4">
+            {messages.map((msg) => (
+              <div
+                key={msg.id}
+                className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} group`}
+              >
+                <div
+                  className={`max-w-2xl px-6 py-4 rounded-2xl shadow-lg transition-all duration-200 ${
+                    msg.role === "user"
+                      ? "bg-gradient-to-br from-primary to-primary/80 text-primary-foreground rounded-br-sm shadow-primary/25" 
+                      : "bg-card/50 text-foreground rounded-bl-sm border border-accent/20 backdrop-blur-sm shadow-accent/10"
+                  }`}
+                >
+                  <div className="flex items-start space-x-3">
+                    {msg.role === "assistant" && (
+                      <div className="p-1 bg-gradient-to-br from-primary to-primary/80 rounded-lg">
+                        <Bot className="w-4 h-4 text-primary-foreground" />
+                      </div>
+                    )}
+                    <div className="flex-1">
+                      {msg.fileName && (
+                        <div className="mb-3 flex items-center space-x-2 p-2 rounded-lg bg-accent/5 border border-accent/20">
+                          <File className="w-4 h-4 text-primary" />
+                          <span className="text-sm font-medium text-foreground">{msg.fileName}</span>
+                        </div>
+                      )}
+                      <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+                      {msg.model && (
+                      <div className="text-xs text-gray-500 mt-1">
+                      via {msg.model}
+                      </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+            
+            {isThinking && (
+              <div className="flex justify-start">
+                <div className="px-6 py-4 rounded-2xl rounded-bl-sm bg-card/50 border border-accent/20 backdrop-blur-sm shadow-lg">
+                  <div className="flex items-center space-x-2">
+                    <div className="flex space-x-1">
+                      <div className="w-2 h-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                      <div className="w-2 h-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                      <div className="w-2 h-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                    </div>
+                    <span className="text-sm text-muted-foreground">AI is thinking...</span>
+                  </div>
+                </div>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+        </div>
+
+        {/* Input Area */}
+        <div className="p-6 border-t border-accent/10 bg-background/80 backdrop-blur-lg">
+          <div className="flex items-center gap-3 max-w-4xl mx-auto">
+            
+            {isThinking ? (
+              <button
+                onClick={handleStopResponse}
+                className="p-3 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-500 transition-all duration-200"
+                title="Stop Response"
+                suppressHydrationWarning
+              >
+                <Square className="w-6 h-6 fill-current" />
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={handleNewChat}
+                  className="p-3 rounded-xl text-foreground/70 hover:text-foreground hover:bg-accent/10 transition-all duration-200"
+                  title="New Chat (Saves current history)"
+                  suppressHydrationWarning
+                >
+                  <MessageSquarePlus className="w-6 h-6" />
+                </button>
+
+                <label 
+                  className="p-3 rounded-xl text-foreground/70 hover:text-foreground hover:bg-accent/10 transition-all duration-200 cursor-pointer" 
+                  title="Attach Document"
+                  suppressHydrationWarning
+                >
+                  <input
+                    type="file"
+                    onChange={handleFileUpload}
+                    accept=".pdf,.doc,.docx,.txt"
+                    className="hidden"
+                  />
+                  <Plus className="w-6 h-6" />
+                </label>
+              </>
+            )}
+            
+            <div className="flex-1 relative">
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyPress={(e) => e.key === "Enter" && handleSendChat()}
+                placeholder={isThinking ? "Thinking..." : "Ask me anything..."}
+                className="w-full bg-card/50 border border-accent/20 rounded-xl px-6 py-4 pr-12 text-base text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent backdrop-blur-sm disabled:opacity-50"
+                disabled={isThinking}
+                suppressHydrationWarning
+              />
+              {chatInput && !isThinking && (
+                <button
+                  onClick={() => setChatInput("")}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 p-1 rounded-lg hover:bg-accent/10 transition-colors"
+                  suppressHydrationWarning
+                >
+                  <X className="w-4 h-4 text-muted-foreground" />
+                </button>
+              )}
+            </div>
+            
+            <button
+              onClick={handleSendChat}
+              disabled={!chatInput.trim() || isThinking} 
+              className={`p-3 rounded-xl transition-all duration-200 ${
+                chatInput.trim() && !isThinking
+                  ? 'bg-gradient-to-r from-primary to-primary/80 text-primary-foreground hover:from-primary/90 hover:to-primary/70 shadow-lg shadow-primary/25' 
+                  : 'bg-accent/20 text-muted-foreground cursor-not-allowed'
+              }`}
+              suppressHydrationWarning
+            >
+              <Send className="w-6 h-6" />
+            </button>
+          </div>
+          {error && (
+            <div className="mt-3 p-3 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
+              <p className="text-sm text-red-600 dark:text-red-400 text-center">{error}</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Chat History Panel */}
+      {showChatHistory && (
+        <div className="fixed top-0 right-0 h-full w-full md:w-96 bg-card/95 backdrop-blur-xl p-6 border-l border-accent/10 overflow-y-auto z-50">
+          <div className="flex justify-between items-center mb-8">
+            <div className="flex items-center space-x-3">
+              <History className="w-6 h-6 text-foreground/70" />
+              <h3 className="text-xl font-semibold text-foreground">Chat History</h3>
+            </div>
+            <button
+              onClick={() => setShowChatHistory(false)}
+              className="p-2 rounded-xl hover:bg-accent/10 transition-all duration-200"
+              suppressHydrationWarning
+            >
+              <X className="w-5 h-5 text-foreground/70" />
+            </button>
+          </div>
+          <div className="space-y-3">
+            {chatHistory.length === 0 && (
+                 <p className="text-muted-foreground text-center py-4">No history yet.</p>
+            )}
+            {chatHistory.map((chat) => (
+              <div
+                key={chat.id}
+                className="p-4 rounded-xl border border-accent/20 hover:bg-accent/5 cursor-pointer transition-all duration-200 group"
+                onClick={() => loadChatFromHistory(chat)}
+              >
+                <div className="flex flex-col space-y-1">
+                  <div className="flex items-center space-x-3">
+                    <FileText className="w-5 h-5 text-muted-foreground group-hover:text-foreground" />
+                    <span className="text-foreground font-medium truncate">{chat.title}</span>
+                  </div>
+                  <div className="flex justify-between items-center pl-8">
+                      <span className="text-xs text-muted-foreground">{chat.date}</span>
+                      {chat.messages.some(m => m.text.includes("stopped")) && (
+                        <span className="text-xs text-red-400 bg-red-400/10 px-1.5 py-0.5 rounded">Stopped</span>
+                      )}
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
 
-      {/* Header with logo/nav linking to home page */}
-      <header className="relative z-50 backdrop-blur-md bg-card/30">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-            <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
-              <span className="text-primary font-bold text-sm">CS</span>
+      {/* Upload Progress */}
+      {isAnalyzing && (
+        <div className="fixed bottom-8 right-8 bg-card/95 backdrop-blur-lg p-6 rounded-2xl shadow-2xl border border-accent/10 z-50 w-80">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center space-x-3">
+              <div className="p-2 bg-primary/10 rounded-xl">
+                <Upload className="w-5 h-5 text-primary" />
+              </div>
+              <div>
+                <p className="font-medium text-foreground">
+                  {uploadedFile ? `Uploading ${uploadedFile.name}` : 'Processing...'}
+                </p>
+                <p className="text-sm text-muted-foreground">Please wait</p>
+              </div>
             </div>
-            <span className="font-space-grotesk font-semibold text-foreground hidden sm:inline">Clause Sense</span>
-          </Link>
-          <nav className="flex items-center gap-6">
-            <Link href="/" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-              Back to Home
-            </Link>
-          </nav>
-        </div>
-      </header>
-
-      <div className="relative max-w-7xl mx-auto px-6 py-20">
-        {!uploadedFile && (
-          <ScrollReveal>
-            <div className="mb-20 text-center space-y-4">
-              <h1 className="font-space-grotesk text-5xl md:text-6xl font-bold text-balance">
-                Analyze Your Legal Documents
-              </h1>
-              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-                Upload a PDF or document. Our AI will summarize, analyze, and flag anomalies instantly.
-              </p>
-            </div>
-          </ScrollReveal>
-        )}
-
-        {/* Upload or Analysis Layout */}
-        {!uploadedFile ? (
-          /* Initial Upload Section */
-          <div className="max-w-2xl mx-auto">
-            <GlassPanel className="p-16 rounded-2xl">
-              <label className="cursor-pointer block">
-                <input type="file" onChange={handleFileUpload} accept=".pdf,.doc,.docx,.txt" className="hidden" />
-                <div className="flex flex-col items-center justify-center py-20 space-y-6 hover:opacity-80 transition-opacity">
-                  <div className="relative w-20 h-20">
-                    <div className="absolute inset-0 rounded-full border-2 border-transparent bg-gradient-to-r from-primary via-accent to-secondary bg-clip-border animate-spin opacity-50" />
-                    <div className="absolute inset-0 rounded-full flex items-center justify-center">
-                      <Upload className="w-10 h-10 text-primary" />
-                    </div>
-                  </div>
-
-                  <div className="text-center">
-                    <p className="font-space-grotesk font-semibold text-2xl">Drop your document here</p>
-                    <p className="text-muted-foreground mt-2">or click to browse (PDF, DOC, DOCX, TXT)</p>
-                  </div>
-                </div>
-              </label>
-            </GlassPanel>
+            <span className="text-lg font-mono font-bold text-primary">{Math.round(uploadProgress)}%</span>
           </div>
-        ) : (
-          /* Analysis Results - Split Layout */
-          <div className="space-y-8">
-            {/* File Header */}
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Analyzing</p>
-              <h1 className="font-space-grotesk text-4xl font-bold">{uploadedFile.name}</h1>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              {/* Left: Document Preview + Chat */}
-              <div className="lg:col-span-2 flex flex-col gap-8">
-                {isAnalyzing ? (
-                  <GlassPanel className="p-12 rounded-2xl flex flex-col items-center justify-center space-y-6 h-96">
-                    <Loader2 className="w-10 h-10 text-primary animate-spin" />
-                    <p className="font-space-grotesk text-lg font-semibold">Analyzing your document...</p>
-                    <p className="text-sm text-muted-foreground">Scanning clauses and detecting anomalies</p>
-                  </GlassPanel>
-                ) : analysisComplete ? (
-                  <GlassPanel className="p-8 rounded-2xl space-y-6 bg-card/40 border border-accent/10 backdrop-blur-md max-h-[600px] overflow-y-auto">
-                    {clauses.map((clause, index) => (
-                      <div
-                        key={index}
-                        className={`p-6 rounded-lg transition-all duration-500 border ${
-                          clause.status === "warning"
-                            ? "border-primary/40 bg-primary/5 hover:bg-primary/10 animate-glow-pulse"
-                            : "border-accent/20 bg-card/50 hover:bg-card/80"
-                        }`}
-                      >
-                        <div className="flex items-start gap-3 mb-2">
-                          <div
-                            className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 ${
-                              clause.status === "warning" ? "bg-primary/80" : "bg-accent/50"
-                            }`}
-                          />
-                          <h3 className="font-medium text-foreground">{clause.title}</h3>
-                        </div>
-                        <p className="text-sm text-muted-foreground leading-relaxed ml-5">
-                          Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut
-                          labore et dolore magna aliqua.
-                        </p>
-                      </div>
-                    ))}
-                  </GlassPanel>
-                ) : null}
-
-                {analysisComplete && (
-                  <GlassPanel className="p-6 rounded-xl bg-card/40 border border-accent/10 backdrop-blur-md flex flex-col h-96">
-                    <h3 className="font-semibold text-sm text-foreground mb-4">Legal Advisor</h3>
-
-                    <div className="flex-1 overflow-y-auto space-y-3 mb-4 chat-scroll">
-                      {messages.map((msg) => (
-                        <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                          <div
-                            className={`max-w-xs px-3 py-2 rounded-lg text-xs animate-slide-up ${
-                              msg.role === "user"
-                                ? "bg-primary/20 text-foreground rounded-br-none"
-                                : "bg-accent/10 text-muted-foreground rounded-bl-none"
-                            }`}
-                          >
-                            {msg.text}
-                          </div>
-                        </div>
-                      ))}
-                      <div ref={messagesEndRef} />
-                    </div>
-
-                    {/* Input */}
-                    <div className="flex gap-2 border-t border-accent/10 pt-4">
-                      <input
-                        type="text"
-                        value={chatInput}
-                        onChange={(e) => setChatInput(e.target.value)}
-                        onKeyPress={(e) => e.key === "Enter" && handleSendChat()}
-                        placeholder="Ask about this..."
-                        className="flex-1 bg-input/50 border border-accent/10 rounded-lg px-2 py-2 text-xs text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary/30 transition-colors"
-                      />
-                      <button
-                        onClick={handleSendChat}
-                        disabled={!chatInput.trim() || isLoading || !currentDocId}
-                        className={`p-2 rounded-lg ${
-                          chatInput.trim() && !isLoading && currentDocId
-                            ? 'bg-primary/20 text-primary hover:bg-primary/30'
-                            : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                        } transition-colors`}
-                        aria-label="Send message"
-                      >
-                        {isLoading ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Send className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
-                  </GlassPanel>
-                )}
-              </div>
-
-              {/* Right: Summary, Issues, Negotiation Tips, Metrics */}
-              <div className="space-y-4 lg:sticky lg:top-32">
-                {analysisComplete && (
-                  <GlassPanel className="p-6 rounded-xl bg-card/40 border border-accent/10 backdrop-blur-md">
-                    <div className="space-y-3">
-                      <h3 className="text-sm font-semibold text-foreground">Summary</h3>
-                      <p className="text-sm text-muted-foreground leading-relaxed">{displayedSummary}</p>
-                      {displayedSummary.length === fullSummary.length && (
-                        <div className="pt-2 border-t border-accent/10">
-                          <p className="text-xs text-accent font-medium">Analysis complete</p>
-                        </div>
-                      )}
-                    </div>
-                  </GlassPanel>
-                )}
-
-                {analysisComplete && (
-                  <div className="space-y-3">
-                    {clauses.slice(0, 2).map((issue, index) => (
-                      <GlassPanel
-                        key={index}
-                        className={`p-4 rounded-lg border transition-all duration-500 ${
-                          visibleIssues.includes(index) ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-                        } ${
-                          issue.status === "warning"
-                            ? "border-primary/30 bg-primary/5 hover:bg-primary/10"
-                            : "border-accent/20 bg-card/50 hover:bg-card/80"
-                        }`}
-                      >
-                        <div className="flex items-start gap-2">
-                          <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-primary" />
-                          <div>
-                            <p className="text-sm font-medium text-foreground">{issue.title}</p>
-                            <p className="text-xs text-muted-foreground">{issue.type}</p>
-                          </div>
-                        </div>
-                      </GlassPanel>
-                    ))}
-                  </div>
-                )}
-
-                {/* Negotiation Insights */}
-                {analysisComplete && (
-                  <GlassPanel className="p-6 rounded-xl bg-gradient-to-br from-accent/5 to-primary/5 border border-accent/10 backdrop-blur-md">
-                    <div className="space-y-3">
-                      <h3 className="text-sm font-semibold text-foreground">Negotiation Tips</h3>
-                      <ul className="space-y-2">
-                        {[
-                          "Request 3-year term instead of 5-year",
-                          "Add liability cap of $250k",
-                          "Limit confidentiality to 2 years post-term",
-                        ].map((tip, idx) => (
-                          <li key={idx} className="text-xs text-muted-foreground flex items-start gap-2">
-                            <span className="text-accent font-bold">→</span>
-                            <span>{tip}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </GlassPanel>
-                )}
-
-                {/* Metrics */}
-                {analysisComplete && (
-                  <GlassPanel className="p-6 rounded-xl">
-                    <h3 className="font-space-grotesk font-semibold mb-4">Metrics</h3>
-                    <div className="space-y-3">
-                      {[
-                        { label: "Clauses", value: "12" },
-                        { label: "Anomalies", value: "1" },
-                        { label: "Risk", value: "Low" },
-                      ].map((metric, idx) => (
-                        <div key={idx} className="border-t border-accent/10 pt-3 first:border-t-0 first:pt-0">
-                          <p className="text-xs text-muted-foreground uppercase">{metric.label}</p>
-                          <p className="text-xl font-semibold mt-1">{metric.value}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </GlassPanel>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <footer className="relative z-30 border-t border-accent/10 backdrop-blur-md bg-card/30 mt-20">
-        <div className="max-w-7xl mx-auto px-6 py-8">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded-lg bg-primary/20 flex items-center justify-center">
-                <span className="text-primary font-bold text-xs">CS</span>
-              </div>
-              <span className="font-space-grotesk font-semibold text-sm text-foreground">Clause Sense</span>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              © 2025 Clause Sense. AI-powered legal document analysis. All rights reserved.
-            </p>
-            <div className="flex gap-4">
-              <Link href="#" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
-                Privacy
-              </Link>
-              <Link href="#" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
-                Terms
-              </Link>
-              <Link href="#" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
-                Contact
-              </Link>
-            </div>
+          <div className="w-full bg-accent/20 rounded-full h-2 overflow-hidden">
+            <div
+              className="bg-gradient-to-r from-primary to-primary/80 h-full rounded-full transition-all duration-500 ease-out"
+              style={{ width: `${uploadProgress}%` }}
+            ></div>
           </div>
         </div>
-      </footer>
+      )}
     </div>
   )
 }

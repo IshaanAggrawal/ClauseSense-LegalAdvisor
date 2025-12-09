@@ -87,16 +87,21 @@ class LLMFactory:
             response = self.hf_client.chat_completion(
                 messages=messages,
                 model=self.hf_model_id, 
-                max_tokens=150,        # REDUCED: extremely cheap
+                max_tokens=100,        # Further reduced to prevent token limit issues
                 temperature=0.1,       # PRECISE
-                stop=["Question:"]     # FIX: Removed "\n\n" so it doesn't cut itself off
+                stop=["Question:", "\n\n", "Disclaimer:"]  # Additional stop tokens
             )
             answer = response.choices[0].message.content.strip()
+            
+            # Truncate if still too long (safety net)
+            if len(answer) > 200:
+                answer = answer[:200].rsplit('.', 1)[0] + '.'
+                
             if not answer.endswith('.'):
-                answer += "."
+                answer += '.'
                 
             final_output = f"{answer} \n\n(Disclaimer: I am an AI, not a lawyer. Consult a professional.)"
-            return final_output
+            return final_output[:500]  # Hard limit on total output
             
         except Exception as e:
             return f"Legal Model Error: {str(e)}"
