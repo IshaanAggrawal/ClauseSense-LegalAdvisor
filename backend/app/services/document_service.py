@@ -10,9 +10,16 @@ class DocumentService:
         self.sanitizer = DataSanitizer()
 
     async def process_upload(self, file: UploadFile):
+        # 0. Validate file type
+        if not file.filename.lower().endswith(('.pdf', '.docx')):
+            raise ValueError("Unsupported file type. Please upload a PDF or DOCX file.")
+            
         # 1. Parse & Sanitize
-        raw_text = await PDFParser.parse(file)
-        clean_text = self.sanitizer.sanitize(raw_text)
+        try:
+            raw_text = await PDFParser.parse(file)
+            clean_text = self.sanitizer.sanitize(raw_text)
+        except Exception as e:
+            raise ValueError(f"Error processing file: {str(e)}")
         
         # 2. Chunking with 10% Overlap
         chunk_size = 2000

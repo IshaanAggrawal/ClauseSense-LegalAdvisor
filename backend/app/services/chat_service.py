@@ -29,7 +29,12 @@ class ChatService:
             search_query = f"{message} {keywords}"
             
             results = self.vector_store.search(search_query)
-            context = " ".join(results['documents'][0]) if results['documents'] else "No relevant document text found."
+            if not results or 'documents' not in results or not results['documents']:
+                return {
+                    "response": "I couldn't find any relevant information in the documents to answer your question.",
+                    "router_decision": "NO_RESULTS"
+                }
+            context = " ".join(results['documents'][0])
             
             # 4. PHASE 2: LEGAL EXPERT (Hugging Face)
             response_text = self.llm.generate_legal_answer(

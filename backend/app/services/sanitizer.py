@@ -6,13 +6,20 @@ from presidio_analyzer.nlp_engine import NlpEngineProvider
 
 class DataSanitizer:
     def __init__(self):
-        # Use NlpEngineProvider to create the NLP engine with proper configuration
-        provider = NlpEngineProvider(conf_file=None)
-        self.nlp_engine = provider.create_engine()
-        
-        # Pass the correctly configured nlp_engine instance to the AnalyzerEngine
-        self.analyzer = AnalyzerEngine(nlp_engine=self.nlp_engine)
-        self.anonymizer = AnonymizerEngine()
+        try:
+            # Configure NlpEngine with the smaller model
+            configuration = {
+                "nlp_engine_name": "spacy",
+                "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}]
+            }
+            provider = NlpEngineProvider(nlp_configuration=configuration)
+            self.nlp_engine = provider.create_engine()
+            
+            # Initialize analyzer with the configured NLP engine
+            self.analyzer = AnalyzerEngine(nlp_engine=self.nlp_engine)
+            self.anonymizer = AnonymizerEngine()
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize sanitizer: {str(e)}")
 
     def sanitize(self, text: str) -> str:
         # Analyze the text for sensitive entities
