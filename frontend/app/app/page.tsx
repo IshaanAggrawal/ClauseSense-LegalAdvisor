@@ -22,11 +22,13 @@ export default function AppPage() {
   const [analysisComplete, setAnalysisComplete] = useState(false)
   const [displayedSummary, setDisplayedSummary] = useState("")
   const [visibleIssues, setVisibleIssues] = useState<number[]>([])
-  // const [isChatOpen, setIsChatOpen] = useState(false) - unused state
+  const [currentDocId, setCurrentDocId] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "1",
-      text: "Hi! I'm your AI legal advisor. Ask me anything about this contract.",
+      text: "Hi! I'm your AI legal advisor. Upload a document to get started.",
       role: "assistant",
     },
   ])
@@ -78,49 +80,67 @@ export default function AppPage() {
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (file) {
-      setUploadedFile({
-        name: file.name,
-        size: file.size,
-      })
-      setIsAnalyzing(true)
-      setDisplayedSummary("")
-      setVisibleIssues([])
+    if (!file) return
 
-      setTimeout(() => {
-        setIsAnalyzing(false)
-        setAnalysisComplete(true)
-      }, 2000)
-    }
+    setIsAnalyzing(true)
+    setError(null)
+    setUploadedFile({
+      name: file.name,
+      size: file.size,
+    })
+    setDisplayedSummary("")
+    setVisibleIssues([])
+
+    // Simulate file processing with a timeout
+    setTimeout(() => {
+      setCurrentDocId(`doc_${Date.now()}`)
+      setAnalysisComplete(true)
+      
+      // Add success message
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        text: "I've analyzed your document. You can now ask me questions about it!",
+        role: "assistant"
+      }])
+      
+      setIsAnalyzing(false)
+    }, 1500) // Simulate processing time
   }
 
   const handleSendChat = () => {
-    if (!chatInput.trim()) return
+    const message = chatInput.trim()
+    if (!message || !currentDocId) return
 
     const userMessage: Message = {
       id: Date.now().toString(),
-      text: chatInput,
+      text: message,
       role: "user",
     }
 
     setMessages((prev) => [...prev, userMessage])
     setChatInput("")
+    setIsLoading(true)
+    setError(null)
 
+    // Simulate API response with mock data
     setTimeout(() => {
-      const responses = [
-        "This clause could be problematic. Let me explain why...",
-        "That's a great question. The standard approach would be...",
-        "I'd recommend negotiating this term. Here's why...",
+      const mockResponses = [
+        "This clause appears to be standard, but you might want to review section 4.2 for any specific concerns.",
+        "Based on the document, the key terms seem to align with standard practices in this jurisdiction.",
+        "I've identified a potential issue with the termination clause. Let me explain the details...",
+        "The document appears to be missing some standard indemnification language. Would you like me to suggest some additions?"
       ]
-      const randomResponse = responses[Math.floor(Math.random() * responses.length)]
-
+      
+      const randomResponse = mockResponses[Math.floor(Math.random() * mockResponses.length)]
+      
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         text: randomResponse,
         role: "assistant",
       }
       setMessages((prev) => [...prev, assistantMessage])
-    }, 800)
+      setIsLoading(false)
+    }, 800) // Simulate network delay
   }
 
   return (
@@ -129,6 +149,15 @@ export default function AppPage() {
       <CursorGlow />
 
       <AuroraBackground />
+      
+      {error && (
+        <div className="fixed top-20 right-6 max-w-md p-4 bg-red-100 border border-red-200 rounded-lg shadow-lg z-50">
+          <div className="flex items-center gap-2 text-red-700">
+            <AlertCircle className="w-5 h-5" />
+            <p className="text-sm">{error}</p>
+          </div>
+        </div>
+      )}
 
       {/* Header with logo/nav linking to home page */}
       <header className="relative z-50 backdrop-blur-md bg-card/30">
@@ -263,11 +292,19 @@ export default function AppPage() {
                       />
                       <button
                         onClick={handleSendChat}
-                        disabled={!chatInput.trim()}
-                        className="p-2 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        disabled={!chatInput.trim() || isLoading || !currentDocId}
+                        className={`p-2 rounded-lg ${
+                          chatInput.trim() && !isLoading && currentDocId
+                            ? 'bg-primary/20 text-primary hover:bg-primary/30'
+                            : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                        } transition-colors`}
                         aria-label="Send message"
                       >
-                        <Send className="w-4 h-4" />
+                        {isLoading ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Send className="w-4 h-4" />
+                        )}
                       </button>
                     </div>
                   </GlassPanel>
