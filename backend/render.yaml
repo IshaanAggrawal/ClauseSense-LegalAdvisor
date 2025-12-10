@@ -1,24 +1,36 @@
 services:
-  # 1. The Web Service (FastAPI)
+  # ---------------------------------------
+  # 1. BACKEND SERVICE (FastAPI + Python)
+  # ---------------------------------------
   - type: web
-    name: legal-advisor-backend
+    name: legal-agent-backend
     env: python
-    region: singapore # or ohio, frankfurt (Choose closest to you)
-    buildCommand: |
-      pip install -r requirements.txt
-      python -m spacy download en_core_web_sm
-    startCommand: gunicorn app.main:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
+    region: ohio # or singapore/frankfurt (choose closest to you)
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.10.0
-      - key: PORT
-        value: 10000
-    # IMPORTANT: Since ChromaDB saves files locally, we need a persistent disk
-    # (Render Free Tier does NOT support disks. If you use Free Tier, 
-    #  your uploaded docs disappear when the server restarts.)
-    disk:
-      name: chroma-data
-      mountPath: /opt/render/project/src/data
-      sizeGB: 1
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      # Note: PINECONE_API_KEY is removed (We switched to Supabase only)
 
-version: "1"
+  # ---------------------------------------
+  # 2. FRONTEND SERVICE (Next.js + Node)
+  # ---------------------------------------
+  - type: web
+    name: legal-agent-frontend
+    env: node
+    region: ohio
+    rootDir: frontend/app
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: legal-agent-backend
+          property: url

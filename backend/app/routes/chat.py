@@ -1,21 +1,22 @@
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from app.services.chat_service import ChatService
 
 router = APIRouter()
 service = ChatService()
 
+class ChatRequest(BaseModel):
+    session_id: str
+    document_id: str  # <--- MUST MATCH FRONTEND JSON KEY
+    message: str
+
 @router.post("/chat")
-async def chat(document_id: str = Body(..., embed=True), message: str = Body(..., embed=True)):
-    """
-    Chat endpoint. 
-    document_id: Acts as the session ID for the context of this specific file.
-    message: The user's query.
-    """
+async def chat(request: ChatRequest):
     try:
-        if not document_id or not message:
-            raise HTTPException(status_code=400, detail="document_id and message are required")
-            
-        return await service.process_message(str(document_id), str(message))
+        return await service.process_message(
+            session_id=request.session_id,
+            doc_id=request.document_id, # Mapping document_id -> doc_id
+            message=request.message
+        )
     except Exception as e:
-        print(f"Chat Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(500, str(e))
