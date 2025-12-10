@@ -1,6 +1,6 @@
 from groq import Groq
 from app.core.config import settings
-
+#groq sanatizer is used for easy deployment on render otehrwise i will use spacy
 class DataSanitizer:
     def __init__(self):
         self.client = Groq(api_key=settings.GROQ_API_KEY)

@@ -4,7 +4,7 @@ from huggingface_hub import InferenceClient
 from app.core.config import settings
 from app.services.sanitizer import DataSanitizer
 import json
-
+# for render deployement i have to use groq entirely but for real production i will fine tune model or take fro hugging face
 class LLMFactory:
     def __init__(self):
         self.sanitizer = DataSanitizer()

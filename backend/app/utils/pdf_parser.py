@@ -17,7 +17,7 @@ class PDFParser:
                     text += extracted + "\n"
             
             print(f"\n📄 --- PDF CONTENT PREVIEW ({file.filename}) ---")
-            print(text[:500]) 
+            print(text[:500])  #by this i will inspect first 500 characters of the parsed text
             print("-------------------------------------------\n")
 
             if len(text.strip()) < 50:

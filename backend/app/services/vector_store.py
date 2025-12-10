@@ -2,7 +2,7 @@ from pinecone import Pinecone, ServerlessSpec
 from app.core.config import settings
 import google.generativeai as genai
 import time
-
+#removed pine cone for now as i am focusing <50 page contract .
 class VectorStore:
     def __init__(self):
         genai.configure(api_key=settings.GOOGLE_API_KEY)
